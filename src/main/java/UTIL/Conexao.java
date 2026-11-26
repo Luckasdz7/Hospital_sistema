@@ -17,7 +17,7 @@ import javax.swing.JOptionPane;
     public Connection conectar() {
         String url = "jdbc:mysql://localhost:3306/hospital";
         String usuario = "root";
-        String senha = "";
+        String senha = "123456";
 
         try {
             Connection conexao = DriverManager.getConnection(url, usuario, senha);
