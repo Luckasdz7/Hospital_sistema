@@ -49,23 +49,14 @@ public class BOConsultas {
     }
 
     public List<consultas> pesquisar(String campo, String termo) {
+        return pesquisar(STRATEGY.PesquisasConsulta.porCampo(campo), termo);
+    }
+
+    // Strategy: a validação do termo é da própria estratégia de pesquisa.
+    public List<consultas> pesquisar(STRATEGY.PesquisaConsulta estrategia, String termo) {
+        if (estrategia == null) throw new IllegalArgumentException("Selecione um tipo de pesquisa válido.");
         String valor = termo == null ? "" : termo.trim();
-        if (!valor.isEmpty()) {
-            switch (campo) {
-                case "data": valor = lerData(valor).toString(); break;
-                case "horario": valor = lerHora(valor).toString(); break;
-                case "status": valor = lerStatus(valor).name(); break;
-                case "id":
-                    try {
-                        if (Integer.parseInt(valor) <= 0) throw new NumberFormatException();
-                    } catch (NumberFormatException e) {
-                        throw new IllegalArgumentException("O ID deve ser um número inteiro positivo.");
-                    }
-                    break;
-                default: break;
-            }
-        }
-        return dao.pesquisar(campo, valor);
+        return dao.pesquisar(estrategia, valor.isEmpty() ? "" : estrategia.normalizar(valor));
     }
 
     public List<MODEL.pacientes> pesquisarPacientes(String termo) {

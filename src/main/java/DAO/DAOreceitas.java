@@ -6,7 +6,7 @@ package DAO;
 
 import MODEL.consultas;
 import MODEL.receitas;
-import UTIL.Conexao;
+import UTIL.ConexaoFactory;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,9 +21,8 @@ public class DAOreceitas {
 
     // Mesmo padrão dos outros DAOs: uma conexão por operação, fechada no fim.
     protected Connection conectar() throws SQLException {
-        Connection conn = new Conexao().conectar();
-        if (conn == null) throw new SQLException("Não foi possível conectar ao banco.");
-        return conn;
+        // Singleton: todas as conexões saem da mesma fábrica.
+        return ConexaoFactory.getInstance().getConnection();
     }
 
     public void Salvar(receitas r) {

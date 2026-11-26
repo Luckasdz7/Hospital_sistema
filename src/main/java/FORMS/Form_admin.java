@@ -4,10 +4,18 @@
  */
 package FORMS;
 
-import BO.BOFuncionarios;
-import BO.BOConsultas;
-import BO.BOMedicos;
-import BO.BOPacientes;
+import ADAPTER.ConsultaTableModel;
+import ADAPTER.FuncionarioTableModel;
+import ADAPTER.MedicoTableModel;
+import ADAPTER.PacienteTableModel;
+import ADAPTER.TabelaAdapter;
+import ADAPTER.UsuarioTableModel;
+import CONTROLLER.ConsultaController;
+import CONTROLLER.FuncionarioController;
+import CONTROLLER.MedicoController;
+import CONTROLLER.PacienteController;
+import STRATEGY.PesquisaConsulta;
+import STRATEGY.PesquisasConsulta;
 import MODEL.consultas;
 import MODEL.pacientes;
 import MODEL.medicos;
@@ -19,7 +27,6 @@ import java.util.function.Consumer;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import javax.swing.table.DefaultTableModel;
 import MODEL.funcionarios;
 import java.util.List;
 
@@ -29,7 +36,6 @@ import java.util.List;
  */
 public class Form_admin extends javax.swing.JFrame {
     
-    // BOFuncionarios boFuncionarios = new BOFuncionarios();
     private static final java.util.logging.Logger logger = java.util.logging.Logger.getLogger(Form_admin.class.getName());
 
     /**
@@ -48,9 +54,10 @@ public class Form_admin extends javax.swing.JFrame {
 
 
     // Comportamento exclusivo da aba Consultas, fora do código gerado pelo NetBeans.
-    private final BOConsultas boConsultas = new BOConsultas();
+    // MVC: a tela só fala com o Controller; Adapter: a tabela mostra a lista direto.
+    private final ConsultaController consultaController = new ConsultaController();
+    private final ConsultaTableModel modeloConsultas = new ConsultaTableModel();
     private final ButtonGroup grupoPesquisaCons = new ButtonGroup();
-    private List<consultas> consultasEncontradas = new ArrayList<>();
     private Integer consultaSelecionadaId;
     private boolean consultasOcupadas;
     private SugestoesConsulta<pacientes> sugestoesPacientes;
@@ -71,19 +78,19 @@ public class Form_admin extends javax.swing.JFrame {
         txtDatacons.setToolTipText("dd/MM/aaaa");
         txtHoraCons.setToolTipText("HH:mm ou HH:mm:ss");
         txtStatusCons.setToolTipText("Agendada, Realizada ou Cancelada");
-        tblConsulta.setModel(new DefaultTableModel(
-                new String[]{"ID", "Paciente", "Médico", "Data", "Horário", "Sala", "Status"}, 0) {
-            @Override public boolean isCellEditable(int row, int column) { return false; }
-        });
+        // Strategy: ao trocar o radio, a dica do campo vem da estratégia escolhida.
+        for (JRadioButton radio : radios)
+            radio.addActionListener(e -> TxtPesquisaCons.setToolTipText(estrategiaConsulta().getDica()));
+        tblConsulta.setModel(modeloConsultas);
         tblConsulta.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         tblConsulta.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !consultasOcupadas) selecionarConsulta();
         });
         sugestoesPacientes = new SugestoesConsulta<>(CbPascienteCOns,
-                boConsultas::pesquisarPacientes,
+                consultaController::sugerirPacientes,
                 p -> p.getNome() + " | CPF: " + p.getCpf() + " | #" + p.getId_paciente());
         sugestoesMedicos = new SugestoesConsulta<>(CbMedicoCons,
-                boConsultas::pesquisarMedicos,
+                consultaController::sugerirMedicos,
                 m -> m.getNome() + " | CRM: " + m.getCrm() + " | #" + m.getId_medico());
         btnPesquiCons.addActionListener(e -> pesquisarConsultas());
         TxtPesquisaCons.addActionListener(e -> pesquisarConsultas());
@@ -112,7 +119,7 @@ public class Form_admin extends javax.swing.JFrame {
             if (consultaSelecionadaId != null) limparConsulta();
             return;
         }
-        consultas c = consultasEncontradas.get(tblConsulta.convertRowIndexToModel(linha));
+        consultas c = modeloConsultas.getItem(tblConsulta.convertRowIndexToModel(linha));
         consultaSelecionadaId = c.getId_consulta();
         sugestoesPacientes.selecionar(c.getPaciente());
         sugestoesMedicos.selecionar(c.getMedico());
@@ -124,37 +131,21 @@ public class Form_admin extends javax.swing.JFrame {
         btnSalvarCons.setToolTipText("Atualizar a consulta #" + consultaSelecionadaId);
     }
 
+    private PesquisaConsulta estrategiaConsulta() {
+        return PesquisasConsulta.porCampo(grupoPesquisaCons.getSelection().getActionCommand());
+    }
+
     private void pesquisarConsultas() {
         if (consultasOcupadas) return;
-        String campo = grupoPesquisaCons.getSelection().getActionCommand();
-        String termo = TxtPesquisaCons.getText().trim();
-        // Valida antes de apagar a seleção ou consultar o banco.
+        // Strategy: a estratégia do radio valida o termo antes de limpar a tela ou ir ao banco.
+        final PesquisaConsulta estrategia = estrategiaConsulta();
+        final String termo;
         try {
-            if (!termo.isEmpty()) {
-                switch (campo) {
-                    case "id":
-                        if (Integer.parseInt(termo) <= 0) throw new IllegalArgumentException("Informe um ID positivo.");
-                        break;
-                    case "data": BOConsultas.lerData(termo); break;
-                    case "horario": BOConsultas.lerHora(termo); break;
-                    case "status": BOConsultas.lerStatus(termo); break;
-                    default: break;
-                }
-            }
-        } catch (NumberFormatException e) {
-            erroConsulta(new IllegalArgumentException("O ID deve ser um número inteiro positivo."));
-            return;
+            termo = consultaController.validarTermo(estrategia, TxtPesquisaCons.getText());
         } catch (IllegalArgumentException e) { erroConsulta(e); return; }
         limparConsulta();
-        executarConsulta(() -> boConsultas.pesquisar(campo, termo), lista -> {
-            consultasEncontradas = lista;
-            DefaultTableModel model = (DefaultTableModel) tblConsulta.getModel();
-            model.setRowCount(0);
-            for (consultas c : lista) {
-                model.addRow(new Object[]{c.getId_consulta(), c.getPaciente().getNome(),
-                    c.getMedico().getNome(), DATA_CONS.format(new java.sql.Date(c.getData_consulta().getTime()).toLocalDate()),
-                    c.getHora_consulta().toString(), c.getSala(), c.getStatus().name()});
-            }
+        executarConsulta(() -> consultaController.pesquisar(estrategia, termo), lista -> {
+            modeloConsultas.setDados(lista);   // Adapter: sem montar Object[] na mão
             tblConsulta.setToolTipText(lista.size() + " consulta(s). Ordem: data e horário mais recentes primeiro.");
             if (lista.isEmpty()) JOptionPane.showMessageDialog(this, "Nenhuma consulta encontrada.");
         });
@@ -162,24 +153,14 @@ public class Form_admin extends javax.swing.JFrame {
 
     private void salvarConsulta() {
         if (consultasOcupadas) return;
-        final consultas c = new consultas();
+        final consultas c;
         final boolean editar = consultaSelecionadaId != null;
         try {
-            pacientes paciente = sugestoesPacientes.selecionado;
-            medicos medico = sugestoesMedicos.selecionado;
-            if (paciente == null || medico == null)
-                throw new IllegalArgumentException("Selecione o paciente e o médico nas sugestões.");
-            if (txtSalaCons.getText().isBlank()) throw new IllegalArgumentException("Informe a sala.");
-            c.setPaciente(paciente);
-            c.setMedico(medico);
-            c.setData_consulta(java.sql.Date.valueOf(BOConsultas.lerData(txtDatacons.getText())));
-            c.setHora_consulta(BOConsultas.lerHora(txtHoraCons.getText()));
-            c.setStatus(BOConsultas.lerStatus(txtStatusCons.getText()));
-            c.setSala(txtSalaCons.getText().trim());
-            if (editar) c.setId_consulta(consultaSelecionadaId);
+            c = consultaController.montar(consultaSelecionadaId, sugestoesPacientes.selecionado, sugestoesMedicos.selecionado,
+                    txtDatacons.getText(), txtHoraCons.getText(), txtSalaCons.getText(), txtStatusCons.getText());
         } catch (IllegalArgumentException e) { erroConsulta(e); return; }
         executarConsulta(() -> {
-            if (editar) boConsultas.Atualizar(c); else boConsultas.Salvar(c);
+            consultaController.salvar(c);
             return true;
         }, sucesso -> {
             limparConsulta();
@@ -196,7 +177,7 @@ public class Form_admin extends javax.swing.JFrame {
                 "Deseja realmente excluir a consulta #" + id + "?", "Confirmar exclusão",
                 JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE, null, opcoes, opcoes[1]);
         if (resposta != 0) return;
-        executarConsulta(() -> { boConsultas.excluir(id); return true; }, sucesso -> {
+        executarConsulta(() -> { consultaController.excluir(id); return true; }, sucesso -> {
             limparConsulta();
             JOptionPane.showMessageDialog(this, "Consulta excluída.");
             pesquisarConsultas();
@@ -383,22 +364,18 @@ public class Form_admin extends javax.swing.JFrame {
         padrao.setSelected(true);
     }
 
-    private void prepararTabela(JTable tabela, java.util.function.BooleanSupplier ocupada, Runnable selecionar, String... colunas) {
-        tabela.setModel(new DefaultTableModel(colunas, 0) {
-            @Override public boolean isCellEditable(int row, int column) { return false; }
-        });
+    private void prepararTabela(JTable tabela, TabelaAdapter<?> modelo, java.util.function.BooleanSupplier ocupada, Runnable selecionar) {
+        tabela.setModel(modelo);
         tabela.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         tabela.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !ocupada.getAsBoolean()) selecionar.run();
         });
     }
 
-    private void preencherTabela(JTable tabela, List<Object[]> linhas, String descricao) {
-        DefaultTableModel model = (DefaultTableModel) tabela.getModel();
-        model.setRowCount(0);
-        for (Object[] linha : linhas) model.addRow(linha);
-        tabela.setToolTipText(linhas.size() + " " + descricao + "(s) encontrado(s).");
-        if (linhas.isEmpty()) JOptionPane.showMessageDialog(this, "Nenhum " + descricao + " encontrado.");
+    private <T> void preencherTabela(JTable tabela, TabelaAdapter<T> modelo, List<T> lista, String descricao) {
+        modelo.setDados(lista);   // Adapter
+        tabela.setToolTipText(lista.size() + " " + descricao + "(s) encontrado(s).");
+        if (lista.isEmpty()) JOptionPane.showMessageDialog(this, "Nenhum " + descricao + " encontrado.");
     }
 
     private <T> void executarAba(java.util.function.Consumer<Boolean> ocupar, String modulo,
@@ -432,19 +409,15 @@ public class Form_admin extends javax.swing.JFrame {
         return campo.getText().trim();
     }
 
-    private static String textoOuNulo(JTextField campo) {
-        String t = campo.getText().trim();
-        return t.isEmpty() ? null : t;
-    }
 
     private static String vazioSeNulo(Object valor) {
         return valor == null ? "" : valor.toString();
     }
 
     // ----------------------------------- Pacientes -----------------------------------
-    private final BOPacientes boPacientes = new BOPacientes();
+    private final PacienteController pacienteController = new PacienteController();
+    private final PacienteTableModel modeloPacientes = new PacienteTableModel();
     private final ButtonGroup grupoPesquisaPac = new ButtonGroup();
-    private List<pacientes> pacientesEncontrados = new ArrayList<>();
     private Integer pacienteSelecionadoId;
     private boolean pacientesOcupados;
 
@@ -457,8 +430,7 @@ public class Form_admin extends javax.swing.JFrame {
         txtNascimentoPac.setToolTipText("dd/MM/aaaa");
         txtSexoPac.setToolTipText("M, F ou Outro");
         txtSanguePac.setToolTipText("A+, A-, B+, B-, AB+, AB-, O+ ou O- (opcional)");
-        prepararTabela(tblPaciente, () -> pacientesOcupados, this::selecionarPaciente,
-                "ID", "Nome", "CPF", "Nascimento", "Telefone", "E-mail", "Sexo", "Tipo sanguíneo");
+        prepararTabela(tblPaciente, modeloPacientes, () -> pacientesOcupados, this::selecionarPaciente);
         btnPesquisarPac.addActionListener(e -> pesquisarPacientes());
         txtPesquisaPac.addActionListener(e -> pesquisarPacientes());
         btnSalvarPac.addActionListener(e -> salvarPaciente());
@@ -482,7 +454,7 @@ public class Form_admin extends javax.swing.JFrame {
             if (pacienteSelecionadoId != null) limparPaciente();
             return;
         }
-        pacientes p = pacientesEncontrados.get(tblPaciente.convertRowIndexToModel(linha));
+        pacientes p = modeloPacientes.getItem(tblPaciente.convertRowIndexToModel(linha));
         pacienteSelecionadoId = p.getId_paciente();
         txtNomePac.setText(p.getNome());
         txtCpfPac.setText(p.getCpf());
@@ -502,51 +474,23 @@ public class Form_admin extends javax.swing.JFrame {
         String campo = grupoPesquisaPac.getSelection().getActionCommand();
         String termo = texto(txtPesquisaPac);
         // Valida antes de apagar a seleção ou consultar o banco.
-        try {
-            if (!termo.isEmpty()) {
-                switch (campo) {
-                    case "id": BOPacientes.lerId(termo); break;
-                    case "nascimento": BOConsultas.lerData(termo); break;
-                    case "sexo": BOPacientes.lerSexo(termo); break;
-                    case "sangue": BOPacientes.lerTipoSanguineo(termo); break;
-                    default: break;
-                }
-            }
-        } catch (IllegalArgumentException e) { erroAba("Pacientes", e); return; }
+        try { pacienteController.validarTermo(campo, termo); }
+        catch (IllegalArgumentException e) { erroAba("Pacientes", e); return; }
         limparPaciente();
-        executarAba(this::ocuparPacientes, "Pacientes", () -> boPacientes.pesquisar(campo, termo), lista -> {
-            pacientesEncontrados = lista;
-            List<Object[]> linhas = new ArrayList<>();
-            for (pacientes p : lista) {
-                linhas.add(new Object[]{p.getId_paciente(), p.getNome(), p.getCpf(),
-                    p.getData_nascimento() == null ? "" : DATA_CONS.format(new java.sql.Date(p.getData_nascimento().getTime()).toLocalDate()),
-                    vazioSeNulo(p.getTelefone()), vazioSeNulo(p.getEmail()),
-                    p.getSexo() == null ? "" : p.getSexo() == MODEL.Sexo.OUTRO ? "Outro" : p.getSexo().name(),
-                    vazioSeNulo(p.getTipo_sanguineo())});
-            }
-            preencherTabela(tblPaciente, linhas, "paciente");
-        });
+        executarAba(this::ocuparPacientes, "Pacientes", () -> pacienteController.pesquisar(campo, termo),
+                lista -> preencherTabela(tblPaciente, modeloPacientes, lista, "paciente"));
     }
 
     private void salvarPaciente() {
         if (pacientesOcupados) return;
-        final pacientes p = new pacientes();
+        final pacientes p;
         final boolean editar = pacienteSelecionadoId != null;
         try {
-            if (texto(txtNomePac).isEmpty()) throw new IllegalArgumentException("Informe o nome do paciente.");
-            p.setNome(texto(txtNomePac));
-            p.setCpf(BOPacientes.lerCpf(texto(txtCpfPac)));
-            p.setData_nascimento(java.sql.Date.valueOf(BOConsultas.lerData(texto(txtNascimentoPac))));
-            p.setSexo(BOPacientes.lerSexo(texto(txtSexoPac)));
-            p.setTelefone(textoOuNulo(txtTelefonePac));
-            p.setEmail(textoOuNulo(txtEmailPac));
-            p.setEndereco(textoOuNulo(txtEnderecoPac));
-            String sangue = textoOuNulo(txtSanguePac);
-            p.setTipo_sanguineo(sangue == null ? null : BOPacientes.lerTipoSanguineo(sangue));
-            if (editar) p.setId_paciente(pacienteSelecionadoId);
+            p = pacienteController.montar(pacienteSelecionadoId, texto(txtNomePac), texto(txtCpfPac), texto(txtNascimentoPac),
+                    texto(txtSexoPac), texto(txtTelefonePac), texto(txtEmailPac), texto(txtEnderecoPac), texto(txtSanguePac));
         } catch (IllegalArgumentException e) { erroAba("Pacientes", e); return; }
         executarAba(this::ocuparPacientes, "Pacientes", () -> {
-            if (editar) boPacientes.Atualizar(p); else boPacientes.Salvar(p);
+            pacienteController.salvar(p);
             return true;
         }, sucesso -> {
             limparPaciente();
@@ -560,7 +504,7 @@ public class Form_admin extends javax.swing.JFrame {
         int id = pacienteSelecionadoId;
         if (!confirmarExclusao("Deseja realmente excluir o paciente #" + id + "?\n"
                 + "As consultas e receitas desse paciente também serão excluídas.")) return;
-        executarAba(this::ocuparPacientes, "Pacientes", () -> { boPacientes.excluir(id); return true; }, sucesso -> {
+        executarAba(this::ocuparPacientes, "Pacientes", () -> { pacienteController.excluir(id); return true; }, sucesso -> {
             limparPaciente();
             JOptionPane.showMessageDialog(this, "Paciente excluído.");
             pesquisarPacientes();
@@ -574,9 +518,9 @@ public class Form_admin extends javax.swing.JFrame {
     }
 
     // ------------------------------------ Médicos ------------------------------------
-    private final BOMedicos boMedicos = new BOMedicos();
+    private final MedicoController medicoController = new MedicoController();
+    private final MedicoTableModel modeloMedicos = new MedicoTableModel();
     private final ButtonGroup grupoPesquisaMed = new ButtonGroup();
-    private List<medicos> medicosEncontrados = new ArrayList<>();
     private Integer medicoSelecionadoId;
     private boolean medicosOcupados;
     private SugestoesConsulta<funcionarios> sugestoesFuncionarioMed;
@@ -587,10 +531,9 @@ public class Form_admin extends javax.swing.JFrame {
                 new String[]{"id", "nome", "crm", "especialidade", "telefone", "email"}, RbNomeMed);
         txtPesquisaMed.setToolTipText("Pesquisa por parte do texto (ID: número exato). Vazio lista todos.");
         CbFuncionarioMed.setToolTipText("Funcionário com cargo medico que será o login deste médico");
-        prepararTabela(tblMedico, () -> medicosOcupados, this::selecionarMedico,
-                "ID", "Nome", "CRM", "Especialidade", "Telefone", "E-mail");
+        prepararTabela(tblMedico, modeloMedicos, () -> medicosOcupados, this::selecionarMedico);
         sugestoesFuncionarioMed = new SugestoesConsulta<>(CbFuncionarioMed,
-                termo -> boMedicos.pesquisarFuncionarios(termo, medicoSelecionadoId == null ? 0 : medicoSelecionadoId),
+                termo -> medicoController.sugerirFuncionarios(termo, medicoSelecionadoId == null ? 0 : medicoSelecionadoId),
                 f -> f.getNome() + " | CPF: " + f.getCpf() + " | #" + f.getId_funcionario());
         btnPesquisarMed.addActionListener(e -> pesquisarMedicos());
         txtPesquisaMed.addActionListener(e -> pesquisarMedicos());
@@ -615,7 +558,7 @@ public class Form_admin extends javax.swing.JFrame {
             if (medicoSelecionadoId != null) limparMedico();
             return;
         }
-        medicos m = medicosEncontrados.get(tblMedico.convertRowIndexToModel(linha));
+        medicos m = modeloMedicos.getItem(tblMedico.convertRowIndexToModel(linha));
         medicoSelecionadoId = m.getId_medico();
         sugestoesFuncionarioMed.selecionar(m.getFuncionario());
         txtCrmMed.setText(m.getCrm());
@@ -630,39 +573,23 @@ public class Form_admin extends javax.swing.JFrame {
         if (medicosOcupados) return;
         String campo = grupoPesquisaMed.getSelection().getActionCommand();
         String termo = texto(txtPesquisaMed);
-        try {
-            if (!termo.isEmpty() && campo.equals("id")) BOPacientes.lerId(termo);
-        } catch (IllegalArgumentException e) { erroAba("Médicos", e); return; }
+        try { medicoController.validarTermo(campo, termo); }
+        catch (IllegalArgumentException e) { erroAba("Médicos", e); return; }
         limparMedico();
-        executarAba(this::ocuparMedicos, "Médicos", () -> boMedicos.pesquisar(campo, termo), lista -> {
-            medicosEncontrados = lista;
-            List<Object[]> linhas = new ArrayList<>();
-            for (medicos m : lista) {
-                linhas.add(new Object[]{m.getId_medico(), m.getNome(), m.getCrm(), vazioSeNulo(m.getEspecialidade()),
-                    vazioSeNulo(m.getTelefone()), vazioSeNulo(m.getEmail())});
-            }
-            preencherTabela(tblMedico, linhas, "médico");
-        });
+        executarAba(this::ocuparMedicos, "Médicos", () -> medicoController.pesquisar(campo, termo),
+                lista -> preencherTabela(tblMedico, modeloMedicos, lista, "médico"));
     }
 
     private void salvarMedico() {
         if (medicosOcupados) return;
-        final medicos m = new medicos();
+        final medicos m;
         final boolean editar = medicoSelecionadoId != null;
         try {
-            funcionarios funcionario = sugestoesFuncionarioMed.selecionado;
-            if (funcionario == null) throw new IllegalArgumentException("Selecione nas sugestões o funcionário (login) do médico.");
-            if (texto(txtCrmMed).isEmpty()) throw new IllegalArgumentException("Informe o CRM.");
-            m.setFuncionario(funcionario);
-            m.setId_funcionario(funcionario.getId_funcionario());
-            m.setCrm(texto(txtCrmMed));
-            m.setTelefone(textoOuNulo(txtTelefoneMed));
-            m.setEspecialidade(textoOuNulo(txtEspecialidadeMed));
-            m.setEmail(textoOuNulo(txtEmailMed));
-            if (editar) m.setId_medico(medicoSelecionadoId);
+            m = medicoController.montar(medicoSelecionadoId, sugestoesFuncionarioMed.selecionado, texto(txtCrmMed),
+                    texto(txtTelefoneMed), texto(txtEspecialidadeMed), texto(txtEmailMed));
         } catch (IllegalArgumentException e) { erroAba("Médicos", e); return; }
         executarAba(this::ocuparMedicos, "Médicos", () -> {
-            if (editar) boMedicos.Atualizar(m); else boMedicos.Salvar(m);
+            medicoController.salvar(m);
             return true;
         }, sucesso -> {
             limparMedico();
@@ -676,7 +603,7 @@ public class Form_admin extends javax.swing.JFrame {
         int id = medicoSelecionadoId;
         if (!confirmarExclusao("Deseja realmente excluir o médico #" + id + "?\n"
                 + "O funcionário (login) vinculado não será apagado.")) return;
-        executarAba(this::ocuparMedicos, "Médicos", () -> { boMedicos.excluir(id); return true; }, sucesso -> {
+        executarAba(this::ocuparMedicos, "Médicos", () -> { medicoController.excluir(id); return true; }, sucesso -> {
             limparMedico();
             JOptionPane.showMessageDialog(this, "Médico excluído.");
             pesquisarMedicos();
@@ -691,9 +618,9 @@ public class Form_admin extends javax.swing.JFrame {
 
     // ------------------------------------ Usuários ------------------------------------
     // Usuários = dados de acesso da tabela funcionarios (login, senha e perfil/cargo).
-    private final BOFuncionarios boFuncionarios = new BOFuncionarios();
+    private final FuncionarioController funcionarioController = new FuncionarioController();
+    private final UsuarioTableModel modeloUsuarios = new UsuarioTableModel();
     private final ButtonGroup grupoPesquisaUsu = new ButtonGroup();
-    private List<funcionarios> usuariosEncontrados = new ArrayList<>();
     private Integer usuarioSelecionadoId;
     private boolean usuariosOcupados;
 
@@ -704,7 +631,7 @@ public class Form_admin extends javax.swing.JFrame {
         txtPesquisaUsu.setToolTipText("Pesquisa por parte do texto (ID: número exato). Vazio lista todos.");
         txtCpfUsu.setToolTipText("11 números");
         txtPerfilUsu.setToolTipText("admin, medico ou secretaria");
-        prepararTabela(tblUsuario, () -> usuariosOcupados, this::selecionarUsuario, "ID", "Nome", "CPF", "Login", "Perfil");
+        prepararTabela(tblUsuario, modeloUsuarios, () -> usuariosOcupados, this::selecionarUsuario);
         btnPesquisarUsu.addActionListener(e -> pesquisarUsuarios());
         txtPesquisaUsu.addActionListener(e -> pesquisarUsuarios());
         btnSalvarUsu.addActionListener(e -> salvarUsuario());
@@ -728,7 +655,7 @@ public class Form_admin extends javax.swing.JFrame {
             if (usuarioSelecionadoId != null) limparUsuario();
             return;
         }
-        funcionarios f = usuariosEncontrados.get(tblUsuario.convertRowIndexToModel(linha));
+        funcionarios f = modeloUsuarios.getItem(tblUsuario.convertRowIndexToModel(linha));
         usuarioSelecionadoId = f.getId_funcionario();
         txtNomeUsu.setText(f.getNome());
         txtCpfUsu.setText(vazioSeNulo(f.getCpf()));
@@ -744,36 +671,23 @@ public class Form_admin extends javax.swing.JFrame {
         if (usuariosOcupados) return;
         String campo = grupoPesquisaUsu.getSelection().getActionCommand();
         String termo = texto(txtPesquisaUsu);
-        try {
-            if (!termo.isEmpty() && campo.equals("id")) BOPacientes.lerId(termo);
-        } catch (IllegalArgumentException e) { erroAba("Usuários", e); return; }
+        try { funcionarioController.validarTermo(campo, termo); }
+        catch (IllegalArgumentException e) { erroAba("Usuários", e); return; }
         limparUsuario();
-        executarAba(this::ocuparUsuarios, "Usuários", () -> boFuncionarios.pesquisar(campo, termo), lista -> {
-            usuariosEncontrados = lista;
-            List<Object[]> linhas = new ArrayList<>();
-            for (funcionarios f : lista) {
-                linhas.add(new Object[]{f.getId_funcionario(), f.getNome(), vazioSeNulo(f.getCpf()), f.getLogin(), vazioSeNulo(f.getCargo())});
-            }
-            preencherTabela(tblUsuario, linhas, "usuário");
-        });
+        executarAba(this::ocuparUsuarios, "Usuários", () -> funcionarioController.pesquisar(campo, termo),
+                lista -> preencherTabela(tblUsuario, modeloUsuarios, lista, "usuário"));
     }
 
     private void salvarUsuario() {
         if (usuariosOcupados) return;
-        final funcionarios f = new funcionarios();
+        final funcionarios f;
         final boolean editar = usuarioSelecionadoId != null;
         try {
-            if (texto(txtNomeUsu).isEmpty()) throw new IllegalArgumentException("Informe o nome.");
-            f.setNome(texto(txtNomeUsu));
-            f.setCpf(BOFuncionarios.lerCpf(texto(txtCpfUsu)));
-            f.setCargo(BOFuncionarios.lerCargo(texto(txtPerfilUsu)));
-            f.setLogin(texto(txtLoginUsu));
-            f.setSenha(new String(txtSenhaUsu.getPassword()));
-            if (!editar && f.getSenha().isEmpty()) throw new IllegalArgumentException("Informe a senha.");
-            if (editar) f.setId_funcionario(usuarioSelecionadoId);
+            f = funcionarioController.montarUsuario(usuarioSelecionadoId, texto(txtNomeUsu), texto(txtCpfUsu),
+                    texto(txtPerfilUsu), texto(txtLoginUsu), new String(txtSenhaUsu.getPassword()));
         } catch (IllegalArgumentException e) { erroAba("Usuários", e); return; }
         executarAba(this::ocuparUsuarios, "Usuários", () -> {
-            if (editar) boFuncionarios.AtualizarUsuario(f); else boFuncionarios.SalvarUsuario(f);
+            funcionarioController.salvarUsuario(f);
             return true;
         }, sucesso -> {
             limparUsuario();
@@ -787,7 +701,7 @@ public class Form_admin extends javax.swing.JFrame {
         int id = usuarioSelecionadoId;
         if (!confirmarExclusao("Deseja realmente excluir o usuário #" + id + "?\n"
                 + "O cadastro de funcionário também será apagado (é a mesma tabela).")) return;
-        executarAba(this::ocuparUsuarios, "Usuários", () -> { boFuncionarios.excluir(id); return true; }, sucesso -> {
+        executarAba(this::ocuparUsuarios, "Usuários", () -> { funcionarioController.excluir(id); return true; }, sucesso -> {
             limparUsuario();
             JOptionPane.showMessageDialog(this, "Usuário excluído.");
             pesquisarUsuarios();
@@ -802,7 +716,7 @@ public class Form_admin extends javax.swing.JFrame {
 
     // ---------------------------------- Funcionários ----------------------------------
     private final ButtonGroup grupoPesquisaFunc = new ButtonGroup();
-    private List<funcionarios> funcionariosEncontrados = new ArrayList<>();
+    private final FuncionarioTableModel modeloFuncionarios = new FuncionarioTableModel();
     private Integer funcionarioSelecionadoId;
     private boolean funcionariosOcupados;
 
@@ -814,8 +728,7 @@ public class Form_admin extends javax.swing.JFrame {
         txtCpfFunc.setToolTipText("11 números");
         txtCargoFunc.setToolTipText("admin, medico ou secretaria");
         txtSalarioFunc.setToolTipText("Ex.: 3500,00");
-        prepararTabela(tblFuncionario, () -> funcionariosOcupados, this::selecionarFuncionario,
-                "ID", "Nome", "CPF", "Cargo", "Salário", "Login");
+        prepararTabela(tblFuncionario, modeloFuncionarios, () -> funcionariosOcupados, this::selecionarFuncionario);
         btnPesquisarFunc.addActionListener(e -> pesquisarFuncionarios());
         txtPesquisaFunc.addActionListener(e -> pesquisarFuncionarios());
         btnSalvarFunc.addActionListener(e -> salvarFuncionario());
@@ -840,7 +753,7 @@ public class Form_admin extends javax.swing.JFrame {
             if (funcionarioSelecionadoId != null) limparFuncionario();
             return;
         }
-        funcionarios f = funcionariosEncontrados.get(tblFuncionario.convertRowIndexToModel(linha));
+        funcionarios f = modeloFuncionarios.getItem(tblFuncionario.convertRowIndexToModel(linha));
         funcionarioSelecionadoId = f.getId_funcionario();
         txtNomeFunc.setText(f.getNome());
         txtCpfFunc.setText(vazioSeNulo(f.getCpf()));
@@ -857,44 +770,23 @@ public class Form_admin extends javax.swing.JFrame {
         if (funcionariosOcupados) return;
         String campo = grupoPesquisaFunc.getSelection().getActionCommand();
         String termo = texto(txtPesquisaFunc);
-        try {
-            if (!termo.isEmpty()) {
-                switch (campo) {
-                    case "id": BOPacientes.lerId(termo); break;
-                    case "salario": BOFuncionarios.lerSalario(termo); break;
-                    default: break;
-                }
-            }
-        } catch (IllegalArgumentException e) { erroAba("Funcionários", e); return; }
+        try { funcionarioController.validarTermo(campo, termo); }
+        catch (IllegalArgumentException e) { erroAba("Funcionários", e); return; }
         limparFuncionario();
-        executarAba(this::ocuparFuncionarios, "Funcionários", () -> boFuncionarios.pesquisar(campo, termo), lista -> {
-            funcionariosEncontrados = lista;
-            List<Object[]> linhas = new ArrayList<>();
-            for (funcionarios f : lista) {
-                linhas.add(new Object[]{f.getId_funcionario(), f.getNome(), vazioSeNulo(f.getCpf()), vazioSeNulo(f.getCargo()),
-                    MOEDA.format(f.getSalario()), f.getLogin()});
-            }
-            preencherTabela(tblFuncionario, linhas, "funcionário");
-        });
+        executarAba(this::ocuparFuncionarios, "Funcionários", () -> funcionarioController.pesquisar(campo, termo),
+                lista -> preencherTabela(tblFuncionario, modeloFuncionarios, lista, "funcionário"));
     }
 
     private void salvarFuncionario() {
         if (funcionariosOcupados) return;
-        final funcionarios f = new funcionarios();
+        final funcionarios f;
         final boolean editar = funcionarioSelecionadoId != null;
         try {
-            if (texto(txtNomeFunc).isEmpty()) throw new IllegalArgumentException("Informe o nome.");
-            f.setNome(texto(txtNomeFunc));
-            f.setCpf(BOFuncionarios.lerCpf(texto(txtCpfFunc)));
-            f.setCargo(BOFuncionarios.lerCargo(texto(txtCargoFunc)));
-            f.setSalario(BOFuncionarios.lerSalario(texto(txtSalarioFunc)).doubleValue());
-            f.setLogin(texto(txtLoginFunc));
-            f.setSenha(new String(txtSenhaFunc.getPassword()));
-            if (!editar && f.getSenha().isEmpty()) throw new IllegalArgumentException("Informe a senha.");
-            if (editar) f.setId_funcionario(funcionarioSelecionadoId);
+            f = funcionarioController.montarFuncionario(funcionarioSelecionadoId, texto(txtNomeFunc), texto(txtCpfFunc),
+                    texto(txtCargoFunc), texto(txtSalarioFunc), texto(txtLoginFunc), new String(txtSenhaFunc.getPassword()));
         } catch (IllegalArgumentException e) { erroAba("Funcionários", e); return; }
         executarAba(this::ocuparFuncionarios, "Funcionários", () -> {
-            if (editar) boFuncionarios.Atualizar(f); else boFuncionarios.Salvar(f);
+            funcionarioController.salvarFuncionario(f);
             return true;
         }, sucesso -> {
             limparFuncionario();
@@ -908,7 +800,7 @@ public class Form_admin extends javax.swing.JFrame {
         int id = funcionarioSelecionadoId;
         if (!confirmarExclusao("Deseja realmente excluir o funcionário #" + id + "?\n"
                 + "Se ele for médico, o cadastro de médico fica sem login vinculado.")) return;
-        executarAba(this::ocuparFuncionarios, "Funcionários", () -> { boFuncionarios.excluir(id); return true; }, sucesso -> {
+        executarAba(this::ocuparFuncionarios, "Funcionários", () -> { funcionarioController.excluir(id); return true; }, sucesso -> {
             limparFuncionario();
             JOptionPane.showMessageDialog(this, "Funcionário excluído.");
             pesquisarFuncionarios();

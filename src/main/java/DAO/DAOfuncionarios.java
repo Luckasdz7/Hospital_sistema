@@ -5,7 +5,7 @@
 package DAO;
 
 import MODEL.funcionarios;
-import UTIL.Conexao;
+import UTIL.ConexaoFactory;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.util.ArrayList;
@@ -20,9 +20,8 @@ public class DAOfuncionarios {
     private static final String ORDEM = " ORDER BY nome, id_funcionario";
 
     protected Connection conectar() throws SQLException {
-        Connection conn = new Conexao().conectar();
-        if (conn == null) throw new SQLException("Não foi possível conectar ao banco.");
-        return conn;
+        // Singleton: todas as conexões saem da mesma fábrica.
+        return ConexaoFactory.getInstance().getConnection();
     }
 
     // Aba Funcionários: grava todos os campos, inclusive salário.
