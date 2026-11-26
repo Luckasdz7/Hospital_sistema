@@ -6,7 +6,7 @@ package DAO;
 
 import MODEL.funcionarios;
 import MODEL.medicos;
-import UTIL.Conexao;
+import UTIL.ConexaoFactory;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,9 +23,8 @@ public class DAOMedicos {
     private static final String ORDEM = " ORDER BY nome, m.id_medico";
 
     protected Connection conectar() throws SQLException {
-        Connection conn = new Conexao().conectar();
-        if (conn == null) throw new SQLException("Não foi possível conectar ao banco.");
-        return conn;
+        // Singleton: todas as conexões saem da mesma fábrica.
+        return ConexaoFactory.getInstance().getConnection();
     }
 
     public void Salvar(medicos m) {

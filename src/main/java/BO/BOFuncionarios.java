@@ -52,12 +52,10 @@ public class BOFuncionarios {
     public List<funcionarios> Buscartodos() {
         return dao.listartodos();
     }
+    // null = login/senha errados. Erro de conexão sobe como exceção, para a tela
+    // não dizer "senha errada" quando na verdade o banco está desligado.
     public funcionarios logar(String login, String senha){
-        try{
-           return dao.buscarlogin(login, senha);
-        }catch(Exception e){
-            return null;
-        }
+        return dao.buscarlogin(login, senha);
     }
 
     public List<funcionarios> pesquisar(String campo, String termo) {

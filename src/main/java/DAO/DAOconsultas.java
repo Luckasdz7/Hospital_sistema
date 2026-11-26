@@ -4,7 +4,9 @@ import MODEL.consultas;
 import MODEL.enum_consultas;
 import MODEL.medicos;
 import MODEL.pacientes;
-import UTIL.Conexao;
+import STRATEGY.PesquisaConsulta;
+import STRATEGY.PesquisasConsulta;
+import UTIL.ConexaoFactory;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,9 +20,8 @@ public class DAOconsultas {
     private static final String ORDEM = " ORDER BY c.data_consulta DESC, c.hora_consulta DESC, c.id_consulta DESC";
 
     protected Connection conectar() throws SQLException {
-        Connection conn = new Conexao().conectar();
-        if (conn == null) throw new SQLException("Não foi possível conectar ao banco.");
-        return conn;
+        // Singleton: todas as conexões saem da mesma fábrica.
+        return ConexaoFactory.getInstance().getConnection();
     }
 
     public void Salvar(consultas c) {
@@ -80,39 +81,22 @@ public class DAOconsultas {
         return lista.isEmpty() ? null : lista.get(0);
     }
 
-    // A coluna vem de uma lista fixa; todos os valores são parâmetros SQL.
+    // Compatibilidade: pesquisa pelo nome do filtro ("id", "paciente"...).
     public List<consultas> pesquisar(String campo, String termo) {
-        String filtro;
-        Object valor = contem(termo);
-        int parametros = 1;
-        switch (campo) {
-            case "paciente":
-                filtro = "(p.nome LIKE ? ESCAPE '!' OR p.cpf LIKE ? ESCAPE '!' OR "
-                        + "REPLACE(REPLACE(REPLACE(p.cpf,'.',''),'-',''),' ','') LIKE ? ESCAPE '!')";
-                parametros = 3;
-                break;
-            case "medico":
-                filtro = "(f.nome LIKE ? ESCAPE '!' OR m.crm LIKE ? ESCAPE '!' OR f.cpf LIKE ? ESCAPE '!' OR "
-                        + "REPLACE(REPLACE(REPLACE(f.cpf,'.',''),'-',''),' ','') LIKE ? ESCAPE '!')";
-                parametros = 4;
-                break;
-            case "id": filtro = "c.id_consulta = ?"; if (!termo.isBlank()) valor = Integer.valueOf(termo); break;
-            case "data": filtro = "c.data_consulta = ?"; if (!termo.isBlank()) valor = Date.valueOf(termo); break;
-            case "horario": filtro = "c.hora_consulta = ?"; if (!termo.isBlank()) valor = Time.valueOf(java.time.LocalTime.parse(termo)); break;
-            case "sala": filtro = "c.sala LIKE ? ESCAPE '!'"; break;
-            case "status": filtro = "c.status = ?"; if (!termo.isBlank()) valor = enum_consultas.valueOf(termo).name(); break;
-            default: throw new IllegalArgumentException("Selecione um tipo de pesquisa válido.");
-        }
-        boolean todos = termo.isBlank();
+        PesquisaConsulta estrategia = PesquisasConsulta.porCampo(campo);
+        String valor = termo == null ? "" : termo.trim();
+        return pesquisar(estrategia, valor.isEmpty() ? "" : estrategia.normalizar(valor));
+    }
+
+    // Strategy: o filtro SQL e os parâmetros vêm da estratégia escolhida.
+    // O termo já deve vir normalizado (estrategia.normalizar). Vazio = todas.
+    public List<consultas> pesquisar(PesquisaConsulta estrategia, String termoNormalizado) {
+        boolean todos = termoNormalizado == null || termoNormalizado.isBlank();
+        List<Object> valores = todos ? List.of() : estrategia.parametros(termoNormalizado);
         List<consultas> lista = new ArrayList<>();
         try (Connection conn = conectar();
-             PreparedStatement stmt = conn.prepareStatement(SELECT + (todos ? "" : " WHERE " + filtro) + ORDEM)) {
-            if (!todos) {
-                for (int i = 1; i <= parametros; i++) {
-                    stmt.setObject(i, i == parametros && parametros > 1
-                            ? contem(termo.replaceAll("[.\\-\\s]", "")) : valor);
-                }
-            }
+             PreparedStatement stmt = conn.prepareStatement(SELECT + (todos ? "" : " WHERE " + estrategia.filtroSql()) + ORDEM)) {
+            for (int i = 0; i < valores.size(); i++) stmt.setObject(i + 1, valores.get(i));
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) lista.add(mapear(rs));
             }

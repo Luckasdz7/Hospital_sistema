@@ -4,9 +4,10 @@
  */
 package FORMS;
 
-import BO.BOConsultas;
-import BO.BOMedicos;
-import BO.BOReceitas;
+import ADAPTER.ConsultaTableModel;
+import CONTROLLER.ConsultaController;
+import CONTROLLER.MedicoController;
+import CONTROLLER.ReceitaController;
 import MODEL.consultas;
 import MODEL.funcionarios;
 import MODEL.medicos;
@@ -16,7 +17,8 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import javax.swing.*;
-import javax.swing.table.DefaultTableModel;
+import STRATEGY.PesquisaConsulta;
+import STRATEGY.PesquisasConsulta;
 
 /**
  *
@@ -45,12 +47,14 @@ public class Form_medico extends javax.swing.JFrame {
     // Comportamento da tela do médico, fora do código gerado pelo NetBeans.
     // Pesquisa de consultas (igual ao Form_admin) + painel de receita da consulta clicada.
     // =====================================================================================
-    private final BOConsultas boConsultas = new BOConsultas();
-    private final BOReceitas boReceitas = new BOReceitas();
-    private final BOMedicos boMedicos = new BOMedicos();
+    // MVC: a tela só conversa com os Controllers.
+    private final ConsultaController consultaController = new ConsultaController();
+    private final ReceitaController receitaController = new ReceitaController();
+    private final MedicoController medicoController = new MedicoController();
+    // Adapter: a JTable mostra a List<consultas> direto.
+    private final ConsultaTableModel modeloConsultas = new ConsultaTableModel();
     private medicos medicoLogado;            // médico que entrou no sistema (null = aberto sem login)
     private final ButtonGroup grupoPesquisaCons = new ButtonGroup();
-    private List<consultas> consultasEncontradas = new ArrayList<>();
     private consultas consultaSelecionada;   // consulta clicada na tabela
     private receitas receitaAtual;           // receita dessa consulta (null = ainda não tem)
     private boolean ocupado;                 // true enquanto o banco está sendo acessado
@@ -69,10 +73,10 @@ public class Form_medico extends javax.swing.JFrame {
         }
         RbPascienteCons.setSelected(true);
         TxtPesquisaCons.setToolTipText("Paciente: nome/CPF; médico: nome/CRM/CPF; data: dd/MM/aaaa; hora: HH:mm. Vazio lista todas.");
-        tblConsulta.setModel(new DefaultTableModel(
-                new String[]{"ID", "Paciente", "Médico", "Data", "Horário", "Sala", "Status"}, 0) {
-            @Override public boolean isCellEditable(int row, int column) { return false; }
-        });
+        // Strategy: ao trocar o radio, a dica do campo vem da estratégia escolhida.
+        for (JRadioButton radio : radios)
+            radio.addActionListener(e -> TxtPesquisaCons.setToolTipText(estrategiaConsulta().getDica()));
+        tblConsulta.setModel(modeloConsultas);
         tblConsulta.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         tblConsulta.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !ocupado) selecionarConsulta();
@@ -81,32 +85,22 @@ public class Form_medico extends javax.swing.JFrame {
         TxtPesquisaCons.addActionListener(e -> pesquisarConsultas());
     }
 
+    private PesquisaConsulta estrategiaConsulta() {
+        return PesquisasConsulta.porCampo(grupoPesquisaCons.getSelection().getActionCommand());
+    }
+
     private void pesquisarConsultas() {
         if (ocupado) return;
-        String campo = grupoPesquisaCons.getSelection().getActionCommand();
-        String termo = TxtPesquisaCons.getText().trim();
-        // Valida antes de limpar a tela ou acessar o banco.
+        // Strategy: a estratégia do radio valida o termo antes de limpar a tela ou ir ao banco.
+        final PesquisaConsulta estrategia = estrategiaConsulta();
+        final String termo;
         try {
-            if (!termo.isEmpty()) {
-                switch (campo) {
-                    case "id": BO.BOPacientes.lerId(termo); break;
-                    case "data": BOConsultas.lerData(termo); break;
-                    case "horario": BOConsultas.lerHora(termo); break;
-                    case "status": BOConsultas.lerStatus(termo); break;
-                    default: break;
-                }
-            }
+            termo = consultaController.validarTermo(estrategia, TxtPesquisaCons.getText());
         } catch (IllegalArgumentException e) { erro(e); return; }
         tblConsulta.clearSelection();
         mostrarSemConsulta();
-        executar(() -> boConsultas.pesquisar(campo, termo), lista -> {
-            consultasEncontradas = lista;
-            DefaultTableModel model = (DefaultTableModel) tblConsulta.getModel();
-            model.setRowCount(0);
-            for (consultas c : lista) {
-                model.addRow(new Object[]{c.getId_consulta(), c.getPaciente().getNome(), c.getMedico().getNome(),
-                    formatar(c.getData_consulta()), c.getHora_consulta().toString(), c.getSala(), c.getStatus().name()});
-            }
+        executar(() -> consultaController.pesquisar(estrategia, termo), lista -> {
+            modeloConsultas.setDados(lista);   // Adapter
             tblConsulta.setToolTipText(lista.size() + " consulta(s). Clique em uma para ver a receita.");
             if (lista.isEmpty()) JOptionPane.showMessageDialog(this, "Nenhuma consulta encontrada.");
         });
@@ -119,7 +113,7 @@ public class Form_medico extends javax.swing.JFrame {
             mostrarSemConsulta();
             return;
         }
-        consultas c = consultasEncontradas.get(tblConsulta.convertRowIndexToModel(linha));
+        consultas c = modeloConsultas.getItem(tblConsulta.convertRowIndexToModel(linha));
         carregarReceita(c);
     }
 
@@ -130,7 +124,7 @@ public class Form_medico extends javax.swing.JFrame {
         lblConsultaRec.setText("Consulta #" + c.getId_consulta() + " - " + c.getPaciente().getNome()
                 + " (" + formatar(c.getData_consulta()) + ")");
         limparCamposReceita();
-        executar(() -> boReceitas.buscarporconsulta(c.getId_consulta()), r -> {
+        executar(() -> receitaController.buscarPorConsulta(c), r -> {
             if (pedido != versaoSelecao) return;
             receitaAtual = r;
             if (r != null) {
@@ -186,29 +180,21 @@ public class Form_medico extends javax.swing.JFrame {
         btnExcluirRec.setEnabled(temConsulta && temReceita);
     }
 
-    private receitas lerCamposReceita() {
-        receitas r = new receitas();
-        r.setConsulta(consultaSelecionada);
-        r.setMedicamento(txtMedicamentoRec.getText().trim());
-        r.setDosagem(txtDosagemRec.getText().trim());
-        String obs = txtObservacoesRec.getText().trim();
-        r.setObservacoes(obs.isEmpty() ? null : obs);
-        r.setValidade(BOReceitas.lerValidade(txtValidadeRec.getText()));
-        if (r.getMedicamento().isEmpty()) throw new IllegalArgumentException("Informe o medicamento.");
-        if (r.getDosagem().isEmpty()) throw new IllegalArgumentException("Informe a dosagem.");
-        return r;
+    private receitas lerCamposReceita(int idReceita) {
+        return receitaController.montar(idReceita, consultaSelecionada, txtMedicamentoRec.getText(),
+                txtDosagemRec.getText(), txtValidadeRec.getText(), txtObservacoesRec.getText());
     }
 
     private void gerarReceita() {
         if (ocupado || consultaSelecionada == null || receitaAtual != null) return;
         final receitas r;
-        try { r = lerCamposReceita(); } catch (IllegalArgumentException e) { erro(e); return; }
+        try { r = lerCamposReceita(0); } catch (IllegalArgumentException e) { erro(e); return; }
         final consultas c = consultaSelecionada;
         final Boolean assumir = confirmarAssumir(c);
         if (assumir == null) return;
         executar(() -> {
-            if (assumir) boConsultas.assumirConsulta(c, medicoLogado);
-            boReceitas.Salvar(r);
+            if (assumir) consultaController.assumir(c, medicoLogado);
+            receitaController.salvar(r);
             return true;
         }, ok -> {
             if (assumir) aplicarNovoMedico(c);
@@ -221,14 +207,13 @@ public class Form_medico extends javax.swing.JFrame {
     private void salvarReceita() {
         if (ocupado || consultaSelecionada == null || receitaAtual == null) return;
         final receitas r;
-        try { r = lerCamposReceita(); } catch (IllegalArgumentException e) { erro(e); return; }
-        r.setId_receita(receitaAtual.getId_receita());
+        try { r = lerCamposReceita(receitaAtual.getId_receita()); } catch (IllegalArgumentException e) { erro(e); return; }
         final consultas c = consultaSelecionada;
         final Boolean assumir = confirmarAssumir(c);
         if (assumir == null) return;
         executar(() -> {
-            if (assumir) boConsultas.assumirConsulta(c, medicoLogado);
-            boReceitas.Atualizar(r);
+            if (assumir) consultaController.assumir(c, medicoLogado);
+            receitaController.salvar(r);
             return true;
         }, ok -> {
             if (assumir) aplicarNovoMedico(c);
@@ -246,7 +231,7 @@ public class Form_medico extends javax.swing.JFrame {
             return; // aberto direto pelo NetBeans, sem login: não troca médico de consulta
         }
         setTitle("Médico - " + usuario.getNome());
-        executar(() -> boMedicos.buscarporfuncionario(usuario.getId_funcionario()), m -> {
+        executar(() -> medicoController.buscarPorFuncionario(usuario), m -> {
             medicoLogado = m;
             if (m == null) {
                 JOptionPane.showMessageDialog(this, "O usuário " + usuario.getLogin()
@@ -274,8 +259,7 @@ public class Form_medico extends javax.swing.JFrame {
     // Atualiza a consulta na memória e a coluna Médico da tabela, sem pesquisar de novo.
     private void aplicarNovoMedico(consultas c) {
         c.setMedico(medicoLogado);
-        int indice = consultasEncontradas.indexOf(c);
-        if (indice >= 0) tblConsulta.getModel().setValueAt(medicoLogado.getNome(), indice, 2);
+        modeloConsultas.atualizarItem(c);   // Adapter: só avisa a tabela que a linha mudou
     }
 
     private void excluirReceita() {
@@ -287,7 +271,7 @@ public class Form_medico extends javax.swing.JFrame {
                 "Deseja realmente excluir a receita da consulta #" + c.getId_consulta() + "?", "Confirmar exclusão",
                 JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE, null, opcoes, opcoes[1]);
         if (resposta != 0) return;
-        executar(() -> { boReceitas.excluir(id); return true; }, ok -> {
+        executar(() -> { receitaController.excluir(id); return true; }, ok -> {
             JOptionPane.showMessageDialog(this, "Receita excluída.");
             carregarReceita(c);
         });

@@ -5,27 +5,23 @@
 package UTIL;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import javax.swing.JOptionPane;
 
 /**
+ * Mantida por compatibilidade com código antigo (ex.: DAO.texte).
+ * Agora só repassa para o Singleton {@link ConexaoFactory}; os DAOs usam a fábrica direto.
  *
  * @author Lucas
  */
   public class Conexao {
-    public Connection conectar() {
-        String url = "jdbc:mysql://localhost:3306/hospital";
-        String usuario = "root";
-        String senha = "123456";
 
+    public Connection conectar() {
         try {
-            Connection conexao = DriverManager.getConnection(url, usuario, senha);
-            //JOptionPane.showMessageDialog(null, "Conectador com sucesso!"); 
-            return conexao;
-        }catch(SQLException e) {
+            return ConexaoFactory.getInstance().getConnection();
+        } catch (SQLException e) {
             JOptionPane.showMessageDialog(null, "Erro ao conectar tente novamente");
-            JOptionPane.showMessageDialog(null, e.getLocalizedMessage()); 
+            JOptionPane.showMessageDialog(null, e.getLocalizedMessage());
             return null;
         }
     }

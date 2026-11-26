@@ -7,7 +7,6 @@ import java.sql.*;
 import java.time.*;
 import java.util.*;
 import javax.swing.*;
-import javax.swing.table.DefaultTableModel;
 
 /** Teste independente de banco: execute o main com target/classes no classpath. */
 public class ConsultasFluxoTest {
@@ -145,8 +144,9 @@ public class ConsultasFluxoTest {
                 check(!excluir.isEnabled() && campo(form,"consultaSelecionadaId")==null,"Estado de cadastro");
                 JTable tabela=(JTable)campo(form,"tblConsulta");
                 check(!tabela.isCellEditable(0,0),"Tabela não editável");
-                definir(form,"consultasEncontradas",new ArrayList<>(List.of(exemplo())));
-                ((DefaultTableModel)tabela.getModel()).addRow(new Object[]{42,"Ana","Médico","15/11/2026","09:30","02","Agendada"});
+                // Adapter: a tabela recebe a lista de consultas direto.
+                ((ADAPTER.ConsultaTableModel)tabela.getModel()).setDados(List.of(exemplo()));
+                check(tabela.getValueAt(0,3).equals("15/11/2026") && tabela.getValueAt(0,1).equals("Ana"),"Adapter mostra a consulta");
                 tabela.setRowSelectionInterval(0,0);
                 check(campo(form,"consultaSelecionadaId").equals(42) && excluir.isEnabled(),"Selecionar para editar");
                 check(((JTextField)campo(form,"txtDatacons")).getText().equals("15/11/2026"),"Data preenchida");

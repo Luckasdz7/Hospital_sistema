@@ -3,7 +3,7 @@
  * Click nbfs://nbhost/SystemFileSystem/Templates/GUIForms/JFrame.java to edit this template
  */
 package FORMS;
-import BO.BOFuncionarios;
+import CONTROLLER.LoginController;
 import MODEL.funcionarios;
 import javax.swing.JOptionPane;
 
@@ -21,6 +21,8 @@ public class Login extends javax.swing.JFrame {
     /**
      * Creates new form Login
      */
+    private final LoginController loginController = new LoginController();
+
     public Login() {
         initComponents();
     }
@@ -108,42 +110,17 @@ public class Login extends javax.swing.JFrame {
     }//GEN-LAST:event_txtsenhaActionPerformed
 
     private void btnlogarActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnlogarActionPerformed
-        // TODO add your handling code here:
-        
+        // MVC: a View só lê os campos; quem autentica é o LoginController.
         String login = txtlogin.getText();
         String senha = txtsenha.getText();
-        BOFuncionarios boFuncionarios = new BOFuncionarios();
-        
-        funcionarios f = boFuncionarios.logar(login, senha);   
-        if(f == null){
-            JOptionPane.showMessageDialog(null, "Senha ou Login errados" + "\n" + "Tente novamente");
-            return; // sem isso o código seguia com cargo nulo e dava NullPointerException
+        try {
+            funcionarios f = loginController.autenticar(login, senha);
+            // Factory: a fábrica escolhe a tela pelo cargo (admin, medico, secretaria).
+            TelaFactory.criarTelaInicial(f).setVisible(true);
+            dispose();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            JOptionPane.showMessageDialog(this, e.getMessage(), "Login", JOptionPane.WARNING_MESSAGE);
         }
-        // trim + equalsIgnoreCase: no banco pode estar "Medico", "medico " etc.
-        String cargo = f.getCargo() == null ? "" : f.getCargo().trim();
-        if(cargo.equalsIgnoreCase("admin")){
-            JOptionPane.showMessageDialog(null, f.getCargo());
-            new Form_admin().setVisible(true);
-            dispose();
-        }else if(cargo.equalsIgnoreCase("medico") || cargo.equalsIgnoreCase("médico")){
-            new Form_medico(f).setVisible(true);
-            JOptionPane.showMessageDialog(null, f.getCargo());
-            dispose();
-        }else if(cargo.equalsIgnoreCase("secretaria") || cargo.equalsIgnoreCase("secretária")){
-            JOptionPane.showMessageDialog(null, f.getCargo());
-            new Form_Secretaria().setVisible(true);
-            dispose();
-        }else{
-            JOptionPane.showMessageDialog(null, "nao de certo");
-            JOptionPane.showMessageDialog(null, f.getCargo());
-            
-        }
-           
-            
-        
-        
-        
-        
     }//GEN-LAST:event_btnlogarActionPerformed
 
     /**
