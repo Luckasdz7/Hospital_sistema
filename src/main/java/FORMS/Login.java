@@ -115,22 +115,24 @@ public class Login extends javax.swing.JFrame {
         BOFuncionarios boFuncionarios = new BOFuncionarios();
         
         funcionarios f = boFuncionarios.logar(login, senha);   
-        String cargo = null;
         if(f == null){
             JOptionPane.showMessageDialog(null, "Senha ou Login errados" + "\n" + "Tente novamente");
-        }else{
-             cargo = f.getCargo();
+            return; // sem isso o código seguia com cargo nulo e dava NullPointerException
         }
-            
-            if(cargo.equals("admin")){
+        // trim + equalsIgnoreCase: no banco pode estar "Medico", "medico " etc.
+        String cargo = f.getCargo() == null ? "" : f.getCargo().trim();
+        if(cargo.equalsIgnoreCase("admin")){
             JOptionPane.showMessageDialog(null, f.getCargo());
             new Form_admin().setVisible(true);
-        }else if(cargo.equals("medico")){
-            new Form_medico().setVisible(true);
+            dispose();
+        }else if(cargo.equalsIgnoreCase("medico") || cargo.equalsIgnoreCase("médico")){
+            new Form_medico(f).setVisible(true);
             JOptionPane.showMessageDialog(null, f.getCargo());
-        }else if(cargo.equals("secretaria")){
+            dispose();
+        }else if(cargo.equalsIgnoreCase("secretaria") || cargo.equalsIgnoreCase("secretária")){
             JOptionPane.showMessageDialog(null, f.getCargo());
             new Form_Secretaria().setVisible(true);
+            dispose();
         }else{
             JOptionPane.showMessageDialog(null, "nao de certo");
             JOptionPane.showMessageDialog(null, f.getCargo());

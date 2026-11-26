@@ -6,11 +6,8 @@ package DAO;
 
 import MODEL.funcionarios;
 import UTIL.Conexao;
-import com.mysql.cj.protocol.Resultset;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.math.BigDecimal;
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,120 +16,118 @@ import java.util.List;
  * @author Lucas
  */
 public class DAOfuncionarios {
-    Connection conn;
-    public DAOfuncionarios(){
-        conn = new Conexao().conectar();
+    private static final String SELECT = "SELECT * FROM funcionarios ";
+    private static final String ORDEM = " ORDER BY nome, id_funcionario";
+
+    protected Connection conectar() throws SQLException {
+        Connection conn = new Conexao().conectar();
+        if (conn == null) throw new SQLException("Não foi possível conectar ao banco.");
+        return conn;
     }
-    public void Salvar(funcionarios f){
-        String sql = "INSERT INTO funcionarios(nome,cargo,salario,login,senha,cpf) VALUES (?,?,?,?,?,?)";
-        try{
-            PreparedStatement stmt =  conn.prepareStatement(sql);
-            stmt.setString(1, f.getNome());
-            stmt.setString(2, f.getCargo());
-            stmt.setDouble(3, f.getSalario());
-            stmt.setString(4, f.getLogin());
-            stmt.setString(5, f.getSenha());
-            stmt.setString(6, f.getCpf());
-            stmt.execute();
-            System.out.println("Sucesso ao Salvar ");
-        }catch(SQLException e){
-            System.out.println("Erro ao salvar funcionario");
-            System.out.println(e.getErrorCode());
+
+    // Aba Funcionários: grava todos os campos, inclusive salário.
+    public void Salvar(funcionarios f) {
+        gravar(f, false, true);
+    }
+
+    public void Atualizar(funcionarios f) {
+        gravar(f, true, true);
+    }
+
+    // Aba Usuários: grava só os dados de acesso; o salário fica como está (NULL no cadastro).
+    public void SalvarUsuario(funcionarios f) {
+        gravar(f, false, false);
+    }
+
+    public void AtualizarUsuario(funcionarios f) {
+        gravar(f, true, false);
+    }
+
+    // Na edição, senha em branco = manter a senha atual.
+    private void gravar(funcionarios f, boolean atualizar, boolean comSalario) {
+        List<String> colunas = new ArrayList<>(List.of("nome", "cargo", "login", "cpf"));
+        List<Object> valores = new ArrayList<>(List.of(f.getNome(), f.getCargo(), f.getLogin(), f.getCpf()));
+        if (comSalario) {
+            colunas.add("salario");
+            valores.add(BigDecimal.valueOf(f.getSalario()).setScale(2, java.math.RoundingMode.HALF_UP));
+        }
+        if (!atualizar || (f.getSenha() != null && !f.getSenha().isEmpty())) {
+            colunas.add("senha");
+            valores.add(f.getSenha());
+        }
+        String sql = atualizar
+                ? "UPDATE funcionarios SET " + String.join("=?, ", colunas) + "=? WHERE id_funcionario=?"
+                : "INSERT INTO funcionarios(" + String.join(",", colunas) + ") VALUES("
+                        + "?,".repeat(colunas.size() - 1) + "?)";
+        try (Connection conn = conectar(); PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < valores.size(); i++) stmt.setObject(i + 1, valores.get(i));
+            if (atualizar) stmt.setInt(valores.size() + 1, f.getId_funcionario());
+            if (stmt.executeUpdate() != 1) throw new SQLException("O funcionário não existe mais ou não foi gravado.");
+        } catch (SQLException e) {
+            throw new IllegalStateException(e.getErrorCode() == 1062
+                    ? "Esse login já está em uso por outro funcionário."
+                    : "Não foi possível salvar o funcionário. Verifique os dados e a conexão.", e);
         }
     }
-    
-    public void Atualizar(funcionarios f){
-        String sql = "update funcionarios SET nome = ?,cargo = ?,salario = ? ,login = ? ,senha = ? ,cpf = ? where id_funcionario = ?";
-        
-        try{
-            PreparedStatement stmt = conn.prepareStatement(sql);
-            stmt.setString(1, f.getNome());
-            stmt.setString(2, f.getCargo());
-            stmt.setDouble(3, f.getSalario());
-            stmt.setString(4, f.getLogin());
-            stmt.setString(5, f.getSenha());
-            stmt.setString(6, f.getCpf());
-            stmt.setInt(7, f.getId_funcionario());
-            stmt.execute();
-            System.out.println("Sucesso ao atualizar funcionario");
-        }catch(SQLException e){
-            System.out.println("Erro ao Atualizar funcionario");
-            System.out.println(e.getErrorCode());
-        }
-    }
-    
-    public void Excluir(int id){
-        String sql = "DELETE from funcionarios where id_funcionario = ?";
-        try{
-            PreparedStatement stmt = conn.prepareStatement(sql);
+
+    public void Excluir(int id) {
+        try (Connection conn = conectar();
+             PreparedStatement stmt = conn.prepareStatement("DELETE FROM funcionarios WHERE id_funcionario=?")) {
             stmt.setInt(1, id);
-            stmt.execute();
-            System.out.println("Sucesso ao Excluir funcionario");
-        }catch(SQLException e){
-            System.out.println("Erro ao Excluir funcionario");
-            System.out.println(e.getErrorCode());
+            if (stmt.executeUpdate() != 1) throw new SQLException("Funcionário não encontrado.");
+        } catch (SQLException e) {
+            throw new IllegalStateException("Não foi possível excluir o funcionário. Ele pode ter sido removido ou estar vinculado a outros registros.", e);
         }
     }
-    public List<funcionarios> listartodos(){
+
+    public List<funcionarios> listartodos() {
+        return pesquisar("nome", "");
+    }
+
+    public funcionarios buscarporid(int id) {
+        List<funcionarios> lista = pesquisar("id", String.valueOf(id));
+        return lista.isEmpty() ? null : lista.get(0);
+    }
+
+    public funcionarios buscarlogin(String login, String senha) {
+        List<funcionarios> lista = consultar(" WHERE login = ? AND senha = ?", List.of(login, senha));
+        return lista.isEmpty() ? null : lista.get(0);
+    }
+
+    // A coluna vem de uma lista fixa; todos os valores são parâmetros SQL.
+    public List<funcionarios> pesquisar(String campo, String termo) {
+        if (!List.of("id", "nome", "cpf", "cargo", "salario", "login").contains(campo))
+            throw new IllegalArgumentException("Selecione um tipo de pesquisa válido.");
+        if (termo.isBlank()) return consultar("", List.of());
+        switch (campo) {
+            case "id": return consultar(" WHERE id_funcionario = ?", List.of(Integer.valueOf(termo)));
+            case "cpf":
+                return consultar(" WHERE REPLACE(REPLACE(REPLACE(cpf,'.',''),'-',''),' ','') LIKE ? ESCAPE '!'",
+                        List.of(contem(termo.replaceAll("[.\\-\\s]", ""))));
+            case "salario": return consultar(" WHERE salario = ?", List.of(new BigDecimal(termo)));
+            default: return consultar(" WHERE " + campo + " LIKE ? ESCAPE '!'", List.of(contem(termo)));
+        }
+    }
+
+    private List<funcionarios> consultar(String filtro, List<Object> valores) {
         List<funcionarios> lista = new ArrayList<>();
-        
-        String sql = "SELECT * FROM funcionarios";
-        try{
-        PreparedStatement stmt = conn.prepareStatement(sql);
-        ResultSet rs = stmt.executeQuery();
-        while(rs.next()){
-            lista.add(mapear(rs));
-        }
-        return lista;
-        }catch(SQLException e){
-            System.out.println("Erro ao listar funcionarios");
-            System.out.println(e.getErrorCode());
-            return null;
-        }
-    }
-    public funcionarios buscarporid(int id){
-        funcionarios f = null;
-        String sql = "SELECT * FROM funcionarios where id_funcionario = ?";
-        try{
-            PreparedStatement stmt = conn.prepareStatement(sql);
-            stmt.setInt(1, id);
-            ResultSet rs = stmt.executeQuery();
-            while(rs.next()){
-                f = mapear(rs);
+        try (Connection conn = conectar();
+             PreparedStatement stmt = conn.prepareStatement(SELECT + filtro + ORDEM)) {
+            for (int i = 0; i < valores.size(); i++) stmt.setObject(i + 1, valores.get(i));
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) lista.add(mapear(rs));
             }
-            return f;
-            
-        }catch(SQLException e){
-            
-            System.out.println("Erro ao pesquisar funcionario");
-            System.out.println(e.getErrorCode());
-            return null;
+            return lista;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Não foi possível pesquisar os funcionários. Verifique a conexão.", e);
         }
     }
-    public funcionarios buscarlogin(String login, String senha){
-        funcionarios f = null;
-        String sql = "SELECT * FROM funcionarios where login = ? AND senha = ?";
-        try{
-            PreparedStatement stmt = conn.prepareStatement(sql);
-            stmt.setString(1, login);
-            stmt.setString(2, senha);
-            ResultSet rs = stmt.executeQuery();
-            while(rs.next()){
-                f = mapear(rs);
-            }
-            return f;
-            
-        }catch(SQLException e){
-            
-            System.out.println("Erro ao pesquisar funcionario");
-            System.out.println(e.getErrorCode());
-            return null;
-        }
+
+    private static String contem(String termo) {
+        return "%" + termo.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
     }
-    
-    private funcionarios mapear(ResultSet rs){
-    
-        try{
+
+    private funcionarios mapear(ResultSet rs) throws SQLException {
         funcionarios f = new funcionarios();
         f.setId_funcionario(rs.getInt("id_funcionario"));
         f.setNome(rs.getString("nome"));
@@ -142,14 +137,5 @@ public class DAOfuncionarios {
         f.setSenha(rs.getString("senha"));
         f.setCpf(rs.getString("cpf"));
         return f;
-        }catch(SQLException e){
-            System.out.println("Erro ao mapear funcionario");
-            System.out.println(e.getErrorCode());
-            return null;
-        }
-    
     }
-
-        
-    
 }
